@@ -1,0 +1,88 @@
+# Test setup for the per-turn language option (nextcloud/stt_whisper2#73)
+#
+#   docker compose up -d            # starts the watcher
+#   cp meeting.mp3 audio/           # -> out/meeting.baseline.srt + out/meeting.perturn.srt
+#   docker compose logs -f watcher  # progress, detected languages per turn, timing
+#
+# Settings: copy .env.example to .env and edit, then `docker compose up -d` again.
+# One-shot tools (profile "tools"): compare, fetch-model, make-mixed
+# ExApp for Nextcloud (profile "exapp"): see PERTURN_TESTING.md
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile.cpu
+  image: stt_whisper2:2.5.0-perturn
+  volumes:
+    - ./audio:/audio
+    - ./out:/out
+    - ./models:/app/models
+    - hf-cache:/root/.cache/huggingface
+
+x-perturn-env: &perturn-env
+  STT_WHISPER2_VAD_FILTER: ${STT_WHISPER2_VAD_FILTER:-1}
+  STT_WHISPER2_VAD_MIN_SILENCE_MS: ${STT_WHISPER2_VAD_MIN_SILENCE_MS:-2000}
+  STT_WHISPER2_PER_TURN_MIN_SILENCE_MS: ${STT_WHISPER2_PER_TURN_MIN_SILENCE_MS:-1000}
+  STT_WHISPER2_PER_TURN_MIN_DETECT_S: ${STT_WHISPER2_PER_TURN_MIN_DETECT_S:-3}
+  STT_WHISPER2_PER_TURN_MIN_PROB: ${STT_WHISPER2_PER_TURN_MIN_PROB:-0.6}
+
+services:
+  # Default service: watch ./audio, write baseline + per-turn transcripts to ./out
+  watcher:
+    <<: *common
+    restart: unless-stopped
+    entrypoint: ["python3", "-u", "/app/test/watch.py"]
+    environment:
+      <<: *perturn-env
+      MODEL: ${MODEL:-large-v3-turbo}
+      MODES: ${MODES:-baseline,perturn}
+      FORMAT: ${FORMAT:-srt}
+      DEVICE: ${DEVICE:-cpu}
+      COMPUTE_TYPE: ${COMPUTE_TYPE:-int8}
+      CPU_THREADS: ${CPU_THREADS:-0}
+
+  # One-shot A/B on a single file: docker compose run --rm compare /audio/x.mp3 --model large-v3
+  compare:
+    <<: *common
+    profiles: ["tools"]
+    entrypoint: ["python3", "/app/test/compare.py"]
+    environment:
+      <<: *perturn-env
+      OUT_DIR: /out
+
+  # docker compose run --rm fetch-model large-v3-turbo  -> ./models/faster-whisper-large-v3-turbo
+  fetch-model:
+    <<: *common
+    profiles: ["tools"]
+    entrypoint: ["python3", "/app/test/fetch_model.py"]
+
+  # docker compose run --rm make-mixed /audio/es1.mp3 /audio/en.mp3 /audio/es2.mp3 -> ./audio/mixed.wav
+  make-mixed:
+    <<: *common
+    profiles: ["tools"]
+    entrypoint: ["bash", "/app/test/make_mixed.sh"]
+    environment:
+      PAUSE: ${PAUSE:-1.5}
+
+  # The real ExApp with the option switched on (manual_install registration in Nextcloud)
+  # docker compose --profile exapp up -d
+  exapp:
+    <<: *common
+    profiles: ["exapp"]
+    restart: unless-stopped
+    ports:
+      - "9030:9030"
+    environment:
+      <<: *perturn-env
+      APP_ID: stt_whisper2
+      APP_DISPLAY_NAME: Local Whisper Speech To Text
+      APP_VERSION: 2.5.0
+      APP_SECRET: ${APP_SECRET:-12345}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 9030
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL:-http://nextcloud.local/index.php}
+      APP_PERSISTENT_STORAGE: /app/models
+      STT_WHISPER2_PER_TURN_LANGUAGE: ${STT_WHISPER2_PER_TURN_LANGUAGE:-1}
+
+volumes:
+  hf-cache:

@@ -93,3 +93,11 @@ MANIFEST
 converted/
 
 geckodriver.log
+/.env
+/audio/*
+!/audio/.gitkeep
+/out/*
+!/out/.gitkeep
+/models/*
+!/models/.gitkeep
+__pycache__/

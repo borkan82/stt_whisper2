@@ -1,0 +1,20 @@
+# CPU-only image for testing the per-turn language option (nextcloud/stt_whisper2#73).
+# Same app code and entrypoint as the upstream CUDA image, ~1 GB instead of ~10 GB.
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl procps ffmpeg git git-lfs \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /
+COPY healthcheck.sh /
+COPY --chmod=775 start.sh /
+RUN pip install --no-cache-dir -r /requirements.txt huggingface_hub && rm /requirements.txt
+
+ADD li[b] /app/lib
+ADD appinfo /app/appinfo
+ADD test /app/test
+RUN mkdir -p /app/models
+
+WORKDIR /app/lib
+ENTRYPOINT ["/start.sh", "python3", "main.py"]
+HEALTHCHECK --interval=2s --timeout=2s --retries=300 CMD /healthcheck.sh
